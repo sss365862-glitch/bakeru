@@ -1,116 +1,51 @@
-const EMOTIONS = ["焦り", "恐怖", "怒り", "恥ずかしさ", "後悔"];
- 
-function buildPrompt(text, n) {
+// ============================================================
+// 設定だけを書くファイル（文章・名前・色・画像はここを直す）
+// ============================================================
 
-  const empty = Array(n).fill('""').join(",");
+// 待ち時間など
+const SETTINGS = {
+  apiTimeoutMs: 4000,     // Geminiを待つ最大時間（4秒）。過ぎたら予備ルート
+  thoughtReadMs: 1000,    // 思考の文字を読ませる時間（0.8〜1.2秒の目安）
+};
 
-  return `ユーザーが小さな不安を一言入力しました：「${text}」
- 
-この一言から、次の2つを作ってください。
+// 名前の接頭語（形態1〜4）。全系統で共通
+// ここの数が形態の数になる（4つ＝孵化＋進化3回）。最後の形態で爆発する
+const PREFIX_SETS = [
+  ["", "超", "究極超絶", "終焉究極超絶"],
+  ["", "覚醒", "暴走覚醒", "崩壊暴走覚醒"],
+  ["", "究極", "大究極", "完全破滅究極"],
+];
+// 1回の観測ごとに、上の3つからランダムに1つを使う
+const PREFIXES = PREFIX_SETS[0];
 
-1. emotion：一番近い感情を、次の5つから1つだけ選ぶ → ${EMOTIONS.join("・")}
+// 舞台の背景画像（消失後は明るく見せる）
+const STAGE_IMAGE = "img/stage.webp";
 
-2. thoughts：この一言のあとに頭に浮かぶ思考を${n}つ。
+// 感情の系統。images に画像のパスを入れると、その形態だけ画像で表示する
+// 例：images: ["img/aseri1.png", "img/aseri2.png", "", ""]
+// 空欄や読み込み失敗のときは図形で表示する
+const EMOTIONS = {
+  "焦り":     { shape: "triangle", color: "#f5c518", base: "アセリム", images: ["img/aseri1.webp", "img/aseri2.webp", "img/aseri3.webp", "img/aseri4.webp"] },
+  "恐怖":     { shape: "diamond",  color: "#9b5de5", base: "コワルム", images: ["img/kowarum1.webp", "img/kowarum2.webp", "img/kowarum3.webp", "img/kowarum4.webp"] },
+  "怒り":     { shape: "star",     color: "#ef233c", base: "イカルム", images: ["img/ikarum1.webp", "img/ikarum2.webp", "img/ikarum3.webp", "img/ikarum4.webp"] },
+  "恥ずかしさ": { shape: "circle",   color: "#ff70a6", base: "テレム",   images: ["img/terem1.webp", "img/terem2.webp", "img/terem3.webp", "img/terem4.webp"] },
+  "後悔":     { shape: "square",   color: "#3a86ff", base: "クイルム", images: ["img/kuirum1.webp", "img/kuirum2.webp", "img/kuirum3.webp", "img/kuirum4.webp"] },
+};
 
-   - 1つ目は入力の一言を受けて、2つ目以降は一つ前の思考を受けて、少しずつ大げさに飛躍させる
+// 予備ルート（AIが応答しないとき）。「遅刻した」の1本だけ
+const SAMPLE_ROUTE = {
+  first: "遅刻した",
+  emotion: "焦り",
+  // 進化の回数と同じ数（3つ）
+  thoughts: [
+    "出席確認、終わったかも",
+    "次も遅刻したら単位落とすかも",
+    "留年したらどうしよう",
+  ],
+};
 
-   - ${n}つ目が一番大きな不安になるようにする
-
-   - それぞれ20文字前後の短い一言。想像として書く
-
-   - 入力の一言そのものは書き直さない
- 
-ルール：
-
-- 実在の企業名・人名・商品名・サービス名・作品名・キャラクター名を使わない
-
-- 暴力・差別・性的な内容、自分を傷つける内容は書かない
-
-- 日本語で書く
- 
-次のJSONだけを返してください：
-
-{"emotion":"","thoughts":[${empty}]}`;
-
-}
- 
-export default async function handler(req, res) {
-
-  if (req.method !== "POST") {
-
-    res.status(405).json({ error: "POST only" });
-
-    return;
-
-  }
-
-  const text = typeof req.body?.text === "string" ? req.body.text.trim().slice(0, 20) : "";
-
-  if (!text) {
-
-    res.status(400).json({ error: "empty text" });
-
-    return;
-
-  }
-
-  const count = Math.min(6, Math.max(1, parseInt(req.body?.count, 10) || 3));
-
-  const key = process.env.GEMINI_API_KEY;
-
-  if (!key) {
-
-    res.status(500).json({ error: "no api key" });
-
-    return;
-
-  }
-
-  const model = process.env.GEMINI_MODEL || "gemini-3.5-flash-lite";
-
-  try {
-
-    const r = await fetch(
-
-      `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent`,
-
-      {
-
-        method: "POST",
-
-        headers: { "Content-Type": "application/json", "x-goog-api-key": key },
-
-        body: JSON.stringify({
-
-          contents: [{ parts: [{ text: buildPrompt(text, count) }] }],
-
-          generationConfig: { responseMimeType: "application/json", temperature: 0.9 },
-
-        }),
-
-      }
-
-    );
-
-    if (!r.ok) {
-
-      res.status(502).json({ error: "gemini " + r.status });
-
-      return;
-
-    }
-
-    const json = await r.json();
-
-    const out = JSON.parse(json?.candidates?.[0]?.content?.parts?.[0]?.text || "{}");
-
-    res.status(200).json({ emotion: out.emotion, thoughts: out.thoughts });
-
-  } catch (e) {
-
-    res.status(502).json({ error: "gemini failed" });
-
-  }
-
-}
- 
+// AIの返答にこの言葉が入っていたら使わずに予備ルートへ（実在の名前対策）
+const NG_WORDS = [
+  "LINE", "Instagram", "インスタ", "TikTok", "Twitter", "YouTube", "Google", "Apple", "iPhone", "Amazon",
+  "ポケモン", "ドラえもん", "ディズニー", "ジブリ", "マリオ", "ドラクエ",
+];
